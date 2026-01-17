@@ -1009,6 +1009,11 @@ parse_ai_result() {
         input_tokens=$(echo "$result_line" | jq -r '.usage.input_tokens // 0' 2>/dev/null || echo "0")
         output_tokens=$(echo "$result_line" | jq -r '.usage.output_tokens // 0' 2>/dev/null || echo "0")
       fi
+
+      # Fallback when no response text was parsed, similar to OpenCode behavior
+      if [[ -z "$response" ]]; then
+        response="Task completed"
+      fi
       ;;
     codex)
       if [[ -n "$CODEX_LAST_MESSAGE_FILE" ]] && [[ -f "$CODEX_LAST_MESSAGE_FILE" ]]; then
