@@ -34,6 +34,8 @@ export async function runTask(task: string, options: RuntimeOptions): Promise<vo
 		task,
 		autoCommit: options.autoCommit,
 		workDir,
+		skipTests: options.skipTests,
+		skipLint: options.skipLint,
 	});
 
 	// Execute with spinner
