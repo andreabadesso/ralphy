@@ -28,6 +28,7 @@ AUTO_COMMIT=true
 SKIP_TESTS=false
 SKIP_LINT=false
 AI_ENGINE="claude"  # claude, opencode, cursor, codex, qwen, or droid
+CLAUDE_MODEL=""     # empty = opus (default), "sonnet" = sonnet
 DRY_RUN=false
 MAX_ITERATIONS=0  # 0 = unlimited
 MAX_RETRIES=3
@@ -520,6 +521,7 @@ run_brownfield_task() {
   case "$AI_ENGINE" in
     claude)
       claude --dangerously-skip-permissions \
+        ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} \
         -p "$prompt" 2>&1 | tee "$output_file"
       ;;
     opencode)
@@ -586,7 +588,8 @@ ${BOLD}SINGLE TASK MODE:${RESET}
   --no-commit         Don't auto-commit after task completion
 
 ${BOLD}AI ENGINE OPTIONS:${RESET}
-  --claude            Use Claude Code (default)
+  --claude            Use Claude Code (default, uses Opus)
+  --sonnet            Use Claude Sonnet model instead of Opus
   --opencode          Use OpenCode
   --cursor            Use Cursor agent
   --codex             Use Codex CLI
@@ -685,6 +688,10 @@ parse_args() {
         ;;
       --claude)
         AI_ENGINE="claude"
+        shift
+        ;;
+      --sonnet)
+        CLAUDE_MODEL="sonnet"
         shift
         ;;
       --cursor|--agent)
@@ -1512,12 +1519,13 @@ run_ai_command() {
     *)
       # Claude Code: use existing approach
       claude --dangerously-skip-permissions \
+        ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} \
         --verbose \
         --output-format stream-json \
         -p "$prompt" > "$output_file" 2>&1 &
       ;;
   esac
-  
+
   ai_pid=$!
 }
 
@@ -2057,6 +2065,7 @@ Focus only on implementing: $task_name"
         (
           cd "$worktree_dir"
           claude --dangerously-skip-permissions \
+            ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} \
             --verbose \
             -p "$prompt" \
             --output-format stream-json
@@ -2636,6 +2645,7 @@ Be careful to preserve functionality from BOTH branches. The goal is to integrat
               ;;
             *)
               claude --dangerously-skip-permissions \
+                ${CLAUDE_MODEL:+--model "$CLAUDE_MODEL"} \
                 -p "$resolve_prompt" \
                 --output-format stream-json > "$resolve_tmpfile" 2>&1
               ;;
