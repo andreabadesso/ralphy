@@ -89,7 +89,7 @@ ralphy --droid      # Factory Droid
 
 ## Task Sources
 
-**Markdown** (default):
+**Markdown file** (default):
 ```bash
 ralphy --prd PRD.md
 ```
@@ -99,6 +99,19 @@ ralphy --prd PRD.md
 - [ ] add dashboard
 - [x] done task (skipped)
 ```
+
+**Markdown folder** (for large projects):
+```bash
+ralphy --prd ./prd/
+```
+When pointing to a folder, Ralphy reads all `.md` files and aggregates tasks:
+```
+prd/
+  backend.md      # - [ ] create user API
+  frontend.md     # - [ ] add login page
+  infra.md        # - [ ] setup CI/CD
+```
+Tasks are tracked per-file so completion updates the correct file.
 
 **YAML**:
 ```bash
@@ -189,7 +202,7 @@ capabilities:
 
 | Flag | What it does |
 |------|--------------|
-| `--prd FILE` | task file (default: PRD.md) |
+| `--prd PATH` | task file or folder (auto-detected, default: PRD.md) |
 | `--yaml FILE` | YAML task file |
 | `--github REPO` | use GitHub issues |
 | `--github-label TAG` | filter issues by label |

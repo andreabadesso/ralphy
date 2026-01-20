@@ -1,3 +1,4 @@
+import { existsSync, statSync } from "node:fs";
 import { Command } from "commander";
 import type { RuntimeOptions } from "../config/types.ts";
 
@@ -11,7 +12,9 @@ export function createProgram(): Command {
 
 	program
 		.name("ralphy")
-		.description("Autonomous AI Coding Loop - Supports Claude Code, OpenCode, Codex, Cursor, Qwen-Code and Factory Droid")
+		.description(
+			"Autonomous AI Coding Loop - Supports Claude Code, OpenCode, Codex, Cursor, Qwen-Code and Factory Droid",
+		)
 		.version(VERSION)
 		.argument("[task]", "Single task to execute (brownfield mode)")
 		.option("--init", "Initialize .ralphy/ configuration")
@@ -36,7 +39,7 @@ export function createProgram(): Command {
 		.option("--base-branch <branch>", "Base branch for PRs")
 		.option("--create-pr", "Create pull request after each task")
 		.option("--draft-pr", "Create PRs as draft")
-		.option("--prd <file>", "PRD file (markdown)", "PRD.md")
+		.option("--prd <path>", "PRD file or folder (auto-detected)", "PRD.md")
 		.option("--yaml <file>", "YAML task file")
 		.option("--github <repo>", "GitHub repo for issues (owner/repo)")
 		.option("--github-label <label>", "Filter GitHub issues by label")
@@ -72,15 +75,25 @@ export function parseArgs(args: string[]): {
 	else if (opts.qwen) aiEngine = "qwen";
 	else if (opts.droid) aiEngine = "droid";
 
-	// Determine PRD source
-	let prdSource: "markdown" | "yaml" | "github" = "markdown";
+	// Determine PRD source with auto-detection for file vs folder
+	let prdSource: "markdown" | "markdown-folder" | "yaml" | "github" = "markdown";
 	let prdFile = opts.prd || "PRD.md";
+	let prdIsFolder = false;
 
 	if (opts.yaml) {
 		prdSource = "yaml";
 		prdFile = opts.yaml;
 	} else if (opts.github) {
 		prdSource = "github";
+	} else {
+		// Auto-detect if PRD path is a file or folder
+		if (existsSync(prdFile)) {
+			const stat = statSync(prdFile);
+			if (stat.isDirectory()) {
+				prdSource = "markdown-folder";
+				prdIsFolder = true;
+			}
+		}
 	}
 
 	// Handle --fast
@@ -92,18 +105,19 @@ export function parseArgs(args: string[]): {
 		skipLint,
 		aiEngine,
 		dryRun: opts.dryRun || false,
-		maxIterations: parseInt(opts.maxIterations, 10) || 0,
-		maxRetries: parseInt(opts.maxRetries, 10) || 3,
-		retryDelay: parseInt(opts.retryDelay, 10) || 5,
+		maxIterations: Number.parseInt(opts.maxIterations, 10) || 0,
+		maxRetries: Number.parseInt(opts.maxRetries, 10) || 3,
+		retryDelay: Number.parseInt(opts.retryDelay, 10) || 5,
 		verbose: opts.verbose || false,
 		branchPerTask: opts.branchPerTask || false,
 		baseBranch: opts.baseBranch || "",
 		createPr: opts.createPr || false,
 		draftPr: opts.draftPr || false,
 		parallel: opts.parallel || false,
-		maxParallel: parseInt(opts.maxParallel, 10) || 3,
+		maxParallel: Number.parseInt(opts.maxParallel, 10) || 3,
 		prdSource,
 		prdFile,
+		prdIsFolder,
 		githubRepo: opts.github || "",
 		githubLabel: opts.githubLabel || "",
 		autoCommit: opts.commit !== false,

@@ -77,10 +77,16 @@ ralphy --droid      # Factory Droid
 
 ## Task Sources
 
-**Markdown** (default):
+**Markdown file** (default):
 ```bash
 ralphy --prd PRD.md
 ```
+
+**Markdown folder** (for large projects):
+```bash
+ralphy --prd ./prd/
+```
+Reads all `.md` files in the folder and aggregates tasks.
 
 **YAML**:
 ```bash
@@ -129,7 +135,7 @@ When enabled (and agent-browser is installed), the AI can:
 
 | Flag | What it does |
 |------|--------------|
-| `--prd FILE` | task file (default: PRD.md) |
+| `--prd PATH` | task file or folder (auto-detected, default: PRD.md) |
 | `--yaml FILE` | YAML task file |
 | `--github REPO` | use GitHub issues |
 | `--github-label TAG` | filter issues by label |

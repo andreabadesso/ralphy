@@ -1,17 +1,13 @@
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { AIEngine, AIResult } from "../engines/types.ts";
-import type { Task, TaskSource } from "../tasks/types.ts";
-import { YamlTaskSource } from "../tasks/yaml.ts";
 import { PROGRESS_FILE, RALPHY_DIR } from "../config/loader.ts";
 import { logTaskProgress } from "../config/writer.ts";
+import type { AIEngine, AIResult } from "../engines/types.ts";
+import { cleanupAgentWorktree, createAgentWorktree, getWorktreeBase } from "../git/worktree.ts";
+import type { Task, TaskSource } from "../tasks/types.ts";
+import { YamlTaskSource } from "../tasks/yaml.ts";
 import { logDebug, logError, logInfo, logSuccess } from "../ui/logger.ts";
 import { notifyTaskComplete, notifyTaskFailed } from "../ui/notify.ts";
-import {
-	cleanupAgentWorktree,
-	createAgentWorktree,
-	getWorktreeBase,
-} from "../git/worktree.ts";
 import { buildParallelPrompt } from "./prompt.ts";
 import { isRetryableError, sleep, withRetry } from "./retry.ts";
 import type { ExecutionOptions, ExecutionResult } from "./sequential.ts";
@@ -36,11 +32,12 @@ async function runAgentInWorktree(
 	originalDir: string,
 	prdSource: string,
 	prdFile: string,
+	prdIsFolder: boolean,
 	maxRetries: number,
 	retryDelay: number,
 	skipTests: boolean,
 	skipLint: boolean,
-	browserEnabled: "auto" | "true" | "false"
+	browserEnabled: "auto" | "true" | "false",
 ): Promise<ParallelAgentResult> {
 	let worktreeDir = "";
 	let branchName = "";
@@ -52,19 +49,25 @@ async function runAgentInWorktree(
 			agentNum,
 			baseBranch,
 			worktreeBase,
-			originalDir
+			originalDir,
 		);
 		worktreeDir = worktree.worktreeDir;
 		branchName = worktree.branchName;
 
 		logDebug(`Agent ${agentNum}: Created worktree at ${worktreeDir}`);
 
-		// Copy PRD file to worktree
+		// Copy PRD file or folder to worktree
 		if (prdSource === "markdown" || prdSource === "yaml") {
 			const srcPath = join(originalDir, prdFile);
 			const destPath = join(worktreeDir, prdFile);
 			if (existsSync(srcPath)) {
 				copyFileSync(srcPath, destPath);
+			}
+		} else if (prdSource === "markdown-folder" && prdIsFolder) {
+			const srcPath = join(originalDir, prdFile);
+			const destPath = join(worktreeDir, prdFile);
+			if (existsSync(srcPath)) {
+				cpSync(srcPath, destPath, { recursive: true });
 			}
 		}
 
@@ -92,7 +95,7 @@ async function runAgentInWorktree(
 				}
 				return res;
 			},
-			{ maxRetries, retryDelay }
+			{ maxRetries, retryDelay },
 		);
 
 		return { task, worktreeDir, branchName, result };
@@ -106,7 +109,12 @@ async function runAgentInWorktree(
  * Run tasks in parallel using worktrees
  */
 export async function runParallel(
-	options: ExecutionOptions & { maxParallel: number; prdSource: string; prdFile: string }
+	options: ExecutionOptions & {
+		maxParallel: number;
+		prdSource: string;
+		prdFile: string;
+		prdIsFolder?: boolean;
+	},
 ): Promise<ExecutionResult> {
 	const {
 		engine,
@@ -122,6 +130,7 @@ export async function runParallel(
 		maxParallel,
 		prdSource,
 		prdFile,
+		prdIsFolder = false,
 		browserEnabled,
 	} = options;
 
@@ -192,12 +201,13 @@ export async function runParallel(
 				workDir,
 				prdSource,
 				prdFile,
+				prdIsFolder,
 				maxRetries,
 				retryDelay,
 				skipTests,
 				skipLint,
-				browserEnabled
-			)
+				browserEnabled,
+			),
 		);
 
 		const results = await Promise.all(promises);
