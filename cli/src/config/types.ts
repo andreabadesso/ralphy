@@ -91,6 +91,8 @@ export interface RuntimeOptions {
 	modelOverride?: string;
 	/** Skip automatic branch merging after parallel execution */
 	skipMerge?: boolean;
+	/** Run agents in tmux sessions */
+	tmux: boolean;
 }
 
 /**
@@ -118,4 +120,5 @@ export const DEFAULT_OPTIONS: RuntimeOptions = {
 	githubLabel: "",
 	autoCommit: true,
 	browserEnabled: "auto",
+	tmux: false,
 };

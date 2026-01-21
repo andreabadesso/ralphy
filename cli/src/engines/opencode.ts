@@ -17,7 +17,7 @@ export class OpenCodeEngine extends BaseAIEngine {
 
 		const { stdout, stderr, exitCode } = await execCommand(this.cliCommand, args, workDir, {
 			OPENCODE_PERMISSION: '{"*":"allow"}',
-		});
+		}, options);
 
 		const output = stdout + stderr;
 

@@ -6,6 +6,7 @@ import { type RalphyConfig, RalphyConfigSchema } from "./types.ts";
 export const RALPHY_DIR = ".ralphy";
 export const CONFIG_FILE = "config.yaml";
 export const PROGRESS_FILE = "progress.txt";
+export const STATE_FILE = "state.json";
 
 /**
  * Get the full path to the ralphy directory
@@ -26,6 +27,13 @@ export function getConfigPath(workDir = process.cwd()): string {
  */
 export function getProgressPath(workDir = process.cwd()): string {
 	return join(workDir, RALPHY_DIR, PROGRESS_FILE);
+}
+
+/**
+ * Get the full path to the state file
+ */
+export function getStatePath(workDir = process.cwd()): string {
+	return join(workDir, RALPHY_DIR, STATE_FILE);
 }
 
 /**

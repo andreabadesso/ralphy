@@ -17,6 +17,14 @@ export interface AIResult {
 export interface EngineOptions {
 	/** Override the default model */
 	modelOverride?: string;
+	/** Run in tmux */
+	tmux?: boolean;
+	/** Agent ID for tmux session naming */
+	agentId?: string;
+	/** Task slug for tmux session naming */
+	taskSlug?: string;
+	/** Progress callback */
+	onProgress?: ProgressCallback;
 }
 
 /**

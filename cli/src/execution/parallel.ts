@@ -1,7 +1,8 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { PROGRESS_FILE, RALPHY_DIR } from "../config/loader.ts";
 import { logTaskProgress } from "../config/writer.ts";
+import { detectStepFromOutput } from "../engines/base.ts";
 import type { AIEngine, AIResult } from "../engines/types.ts";
 import { getCurrentBranch, returnToBaseBranch } from "../git/branch.ts";
 import {
@@ -19,6 +20,7 @@ import { resolveConflictsWithAI } from "./conflict-resolution.ts";
 import { buildParallelPrompt } from "./prompt.ts";
 import { isRetryableError, sleep, withRetry } from "./retry.ts";
 import type { ExecutionOptions, ExecutionResult } from "./sequential.ts";
+import { updateState, removeAgentFromState, updateSummary } from "./state.ts";
 
 interface ParallelAgentResult {
 	task: Task;
@@ -47,11 +49,15 @@ async function runAgentInWorktree(
 	skipLint: boolean,
 	browserEnabled: "auto" | "true" | "false",
 	modelOverride?: string,
+	tmux?: boolean,
 ): Promise<ParallelAgentResult> {
 	let worktreeDir = "";
 	let branchName = "";
+	const agentId = agentNum.toString();
 
 	try {
+		updateState(agentId, { task: task.title, status: "pending", step: "Creating worktree" }, originalDir);
+		
 		// Create worktree
 		const worktree = await createAgentWorktree(
 			task.title,
@@ -64,18 +70,27 @@ async function runAgentInWorktree(
 		branchName = worktree.branchName;
 
 		logDebug(`Agent ${agentNum}: Created worktree at ${worktreeDir}`);
+		updateState(agentId, { worktreeDir, branchName, step: "Preparing worktree" }, originalDir);
 
 		// Copy PRD file or folder to worktree
 		if (prdSource === "markdown" || prdSource === "yaml") {
 			const srcPath = join(originalDir, prdFile);
 			const destPath = join(worktreeDir, prdFile);
 			if (existsSync(srcPath)) {
+				const destDir = dirname(destPath);
+				if (!existsSync(destDir)) {
+					mkdirSync(destDir, { recursive: true });
+				}
 				copyFileSync(srcPath, destPath);
 			}
 		} else if (prdSource === "markdown-folder" && prdIsFolder) {
 			const srcPath = join(originalDir, prdFile);
 			const destPath = join(worktreeDir, prdFile);
 			if (existsSync(srcPath)) {
+				const destDir = dirname(destPath);
+				if (!existsSync(destDir)) {
+					mkdirSync(destDir, { recursive: true });
+				}
 				cpSync(srcPath, destPath, { recursive: true });
 			}
 		}
@@ -96,7 +111,28 @@ async function runAgentInWorktree(
 		});
 
 		// Execute with retry
-		const engineOptions = modelOverride ? { modelOverride } : undefined;
+		const taskSlug = task.title.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase();
+		const engineOptions = { 
+			modelOverride,
+			tmux,
+			agentId,
+			taskSlug,
+			onProgress: (line: string) => {
+				const step = detectStepFromOutput(line);
+				if (step) {
+					updateState(agentId, { step }, originalDir);
+				}
+			}
+		};
+
+		if (tmux) {
+			const sessionName = `ralphy-${agentId}-${taskSlug}`.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase();
+			updateState(agentId, { tmuxSession: sessionName, status: "running", step: "Executing (tmux)" }, originalDir);
+			logInfo(`Agent ${agentNum} (${task.title}) running in tmux: tmux attach -t ${sessionName}`);
+		} else {
+			updateState(agentId, { status: "running", step: "Executing" }, originalDir);
+		}
+
 		const result = await withRetry(
 			async () => {
 				const res = await engine.execute(prompt, worktreeDir, engineOptions);
@@ -108,9 +144,16 @@ async function runAgentInWorktree(
 			{ maxRetries, retryDelay },
 		);
 
+		if (result.success) {
+			updateState(agentId, { status: "completed", step: "Finished" }, originalDir);
+		} else {
+			updateState(agentId, { status: "failed", step: "Failed", error: result.error }, originalDir);
+		}
+
 		return { task, worktreeDir, branchName, result };
 	} catch (error) {
 		const errorMsg = error instanceof Error ? error.message : String(error);
+		updateState(agentId, { status: "failed", step: "Error", error: errorMsg }, originalDir);
 		return { task, worktreeDir, branchName, result: null, error: errorMsg };
 	}
 }
@@ -144,6 +187,7 @@ export async function runParallel(
 		browserEnabled,
 		modelOverride,
 		skipMerge,
+		tmux,
 	} = options;
 
 	const result: ExecutionResult = {
@@ -169,6 +213,9 @@ export async function runParallel(
 	// Global agent counter to ensure unique numbering across batches
 	let globalAgentNum = 0;
 
+	// Track tasks that failed to avoid infinite loops
+	const failedTaskIds = new Set<string>();
+
 	// Process tasks in batches
 	let iteration = 0;
 
@@ -180,7 +227,7 @@ export async function runParallel(
 		}
 
 		// Get tasks for this batch
-		let tasks: Task[] = [];
+		let allTasks: Task[] = [];
 
 		// For YAML sources, try to get tasks from the same parallel group
 		if (taskSource instanceof YamlTaskSource) {
@@ -189,18 +236,31 @@ export async function runParallel(
 
 			const group = await taskSource.getParallelGroup(nextTask.title);
 			if (group > 0) {
-				tasks = await taskSource.getTasksInGroup(group);
+				allTasks = await taskSource.getTasksInGroup(group);
 			} else {
-				tasks = [nextTask];
+				allTasks = [nextTask];
 			}
 		} else {
 			// For other sources, get all remaining tasks
-			tasks = await taskSource.getAllTasks();
+			allTasks = await taskSource.getAllTasks();
 		}
 
+		// Filter out tasks that already failed in this session
+		const tasks = allTasks.filter(t => !failedTaskIds.has(t.id));
+
 		if (tasks.length === 0) {
-			logSuccess("All tasks completed!");
+			if (allTasks.length > 0) {
+				logWarn(`Some tasks (${allTasks.length}) are still pending but have failed before. Stopping to avoid infinite loop.`);
+			} else {
+				logSuccess("All tasks completed!");
+			}
 			break;
+		}
+
+		// Update summary with total tasks if this is the first iteration
+		if (iteration === 0) {
+			const allTasksCount = await taskSource.countRemaining();
+			updateSummary({ total: allTasksCount }, workDir);
 		}
 
 		// Limit to maxParallel
@@ -208,6 +268,7 @@ export async function runParallel(
 		iteration++;
 
 		logInfo(`Batch ${iteration}: ${batch.length} tasks in parallel`);
+		updateSummary({ inProgress: batch.length }, workDir);
 
 		if (dryRun) {
 			logInfo("(dry run) Skipping batch");
@@ -233,6 +294,7 @@ export async function runParallel(
 				skipLint,
 				browserEnabled,
 				modelOverride,
+				tmux,
 			);
 		});
 
@@ -246,6 +308,8 @@ export async function runParallel(
 				logError(`Task "${task.title}" failed: ${error}`);
 				logTaskProgress(task.title, "failed", workDir);
 				result.tasksFailed++;
+				failedTaskIds.add(task.id);
+				updateSummary({ failed: result.tasksFailed }, workDir);
 				notifyTaskFailed(task.title, error);
 			} else if (aiResult?.success) {
 				logSuccess(`Task "${task.title}" completed`);
@@ -255,6 +319,7 @@ export async function runParallel(
 				await taskSource.markComplete(task.id);
 				logTaskProgress(task.title, "completed", workDir);
 				result.tasksCompleted++;
+				updateSummary({ completed: result.tasksCompleted }, workDir);
 				notifyTaskComplete(task.title);
 
 				// Track successful branch for merge phase
@@ -266,11 +331,20 @@ export async function runParallel(
 				logError(`Task "${task.title}" failed: ${errMsg}`);
 				logTaskProgress(task.title, "failed", workDir);
 				result.tasksFailed++;
+				failedTaskIds.add(task.id);
+				updateSummary({ failed: result.tasksFailed }, workDir);
 				notifyTaskFailed(task.title, errMsg);
 			}
 
 			// Cleanup worktree
 			if (worktreeDir) {
+				// Don't cleanup if failed and using tmux, so user can debug
+				if (tmux && (error || !aiResult?.success)) {
+					logInfo(`Task failed. Worktree and tmux session preserved for debugging.`);
+					logInfo(`Worktree: ${worktreeDir}`);
+					continue;
+				}
+
 				const cleanup = await cleanupAgentWorktree(worktreeDir, branchName, workDir);
 				if (cleanup.leftInPlace) {
 					logInfo(`Worktree left in place (uncommitted changes): ${worktreeDir}`);

@@ -49,6 +49,7 @@ export function createProgram(): Command {
 		.option("--model <name>", "Override default model for the engine")
 		.option("--sonnet", "Shortcut for --claude --model sonnet")
 		.option("--no-merge", "Skip automatic branch merging after parallel execution")
+		.option("--tmux", "Run agents in dedicated tmux sessions")
 		.option("-v, --verbose", "Verbose output");
 
 	return program;
@@ -131,6 +132,7 @@ export function parseArgs(args: string[]): {
 		browserEnabled: opts.browser === true ? "true" : opts.browser === false ? "false" : "auto",
 		modelOverride,
 		skipMerge: opts.merge === false,
+		tmux: opts.tmux || false,
 	};
 
 	return {

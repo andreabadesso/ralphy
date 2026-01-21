@@ -8,6 +8,8 @@ import { notifyTaskComplete, notifyTaskFailed } from "../ui/notify.ts";
 import { ProgressSpinner } from "../ui/spinner.ts";
 import { buildPrompt } from "./prompt.ts";
 import { isRetryableError, sleep, withRetry } from "./retry.ts";
+import { updateState, removeAgentFromState, updateSummary } from "./state.ts";
+import { detectStepFromOutput } from "../engines/base.ts";
 
 export interface ExecutionOptions {
 	engine: AIEngine;
@@ -31,6 +33,8 @@ export interface ExecutionOptions {
 	modelOverride?: string;
 	/** Skip automatic branch merging after parallel execution */
 	skipMerge?: boolean;
+	/** Run agents in tmux sessions */
+	tmux: boolean;
 }
 
 export interface ExecutionResult {
@@ -62,6 +66,7 @@ export async function runSequential(options: ExecutionOptions): Promise<Executio
 		browserEnabled,
 		activeSettings,
 		modelOverride,
+		tmux,
 	} = options;
 
 	const result: ExecutionResult = {
@@ -80,6 +85,12 @@ export async function runSequential(options: ExecutionOptions): Promise<Executio
 			break;
 		}
 
+		// Update summary with total tasks if this is the first iteration
+		if (iteration === 0) {
+			const allTasksCount = await taskSource.countRemaining();
+			updateSummary({ total: allTasksCount }, workDir);
+		}
+
 		// Get next task
 		const task = await taskSource.getNextTask();
 		if (!task) {
@@ -90,6 +101,7 @@ export async function runSequential(options: ExecutionOptions): Promise<Executio
 		iteration++;
 		const remaining = await taskSource.countRemaining();
 		logInfo(`Task ${iteration}: ${task.title} (${remaining} remaining)`);
+		updateState("1", { task: task.title, status: "pending", step: "Starting" }, workDir);
 
 		// Create branch if needed
 		let branch: string | null = null;
@@ -118,20 +130,41 @@ export async function runSequential(options: ExecutionOptions): Promise<Executio
 
 		if (dryRun) {
 			spinner.success("(dry run) Skipped");
+			updateState("1", { status: "completed", step: "Skipped (dry run)" }, workDir);
 		} else {
 			try {
 				aiResult = await withRetry(
 					async () => {
 						spinner.updateStep("Working");
+						updateState("1", { status: "running", step: "Executing" }, workDir);
 
 						// Use streaming if available
-						const engineOptions = modelOverride ? { modelOverride } : undefined;
-						if (engine.executeStreaming) {
+						const taskSlug = task.title.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase();
+						const engineOptions = { 
+							modelOverride,
+							tmux,
+							agentId: "1",
+							taskSlug,
+							onProgress: (line: string) => {
+								const step = detectStepFromOutput(line);
+								if (step) {
+									updateState("1", { step }, workDir);
+								}
+							}
+						};
+
+						if (tmux) {
+							const sessionName = `ralphy-1-${taskSlug}`.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase();
+							updateState("1", { tmuxSession: sessionName, step: "Executing (tmux)" }, workDir);
+						}
+
+						if (engine.executeStreaming && !tmux) {
 							return await engine.executeStreaming(
 								prompt,
 								workDir,
 								(step) => {
 									spinner.updateStep(step);
+									updateState("1", { step }, workDir);
 								},
 								engineOptions,
 							);
@@ -156,6 +189,7 @@ export async function runSequential(options: ExecutionOptions): Promise<Executio
 
 				if (aiResult.success) {
 					spinner.success();
+					updateState("1", { status: "completed", step: "Finished" }, workDir);
 					result.totalInputTokens += aiResult.inputTokens;
 					result.totalOutputTokens += aiResult.outputTokens;
 
@@ -163,6 +197,7 @@ export async function runSequential(options: ExecutionOptions): Promise<Executio
 					await taskSource.markComplete(task.id);
 					logTaskProgress(task.title, "completed", workDir);
 					result.tasksCompleted++;
+					updateSummary({ completed: result.tasksCompleted }, workDir);
 
 					notifyTaskComplete(task.title);
 
@@ -183,13 +218,16 @@ export async function runSequential(options: ExecutionOptions): Promise<Executio
 					}
 				} else {
 					spinner.error(aiResult.error || "Unknown error");
+					updateState("1", { status: "failed", step: "Failed", error: aiResult.error }, workDir);
 					logTaskProgress(task.title, "failed", workDir);
 					result.tasksFailed++;
+					updateSummary({ failed: result.tasksFailed }, workDir);
 					notifyTaskFailed(task.title, aiResult.error || "Unknown error");
 				}
 			} catch (error) {
 				const errorMsg = error instanceof Error ? error.message : String(error);
 				spinner.error(errorMsg);
+				updateState("1", { status: "failed", step: "Error", error: errorMsg }, workDir);
 				logTaskProgress(task.title, "failed", workDir);
 				result.tasksFailed++;
 				notifyTaskFailed(task.title, errorMsg);

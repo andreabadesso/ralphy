@@ -21,7 +21,7 @@ export class DroidEngine extends BaseAIEngine {
 		}
 		args.push(prompt);
 
-		const { stdout, stderr, exitCode } = await execCommand(this.cliCommand, args, workDir);
+		const { stdout, stderr, exitCode } = await execCommand(this.cliCommand, args, workDir, undefined, options);
 
 		const output = stdout + stderr;
 

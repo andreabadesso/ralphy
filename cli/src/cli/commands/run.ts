@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import type { RuntimeOptions } from "../../config/types.ts";
 import { createEngine, isEngineAvailable } from "../../engines/index.ts";
 import type { AIEngineName } from "../../engines/types.ts";
+import { commandExists } from "../../engines/base.ts";
 import { isBrowserAvailable } from "../../execution/browser.ts";
 import { runParallel } from "../../execution/parallel.ts";
 import { type ExecutionResult, runSequential } from "../../execution/sequential.ts";
@@ -55,6 +56,15 @@ export async function runLoop(options: RuntimeOptions): Promise<void> {
 	if (!available) {
 		logError(`${engine.name} CLI not found. Make sure '${engine.cliCommand}' is in your PATH.`);
 		process.exit(1);
+	}
+
+	// Check tmux availability if requested
+	if (options.tmux) {
+		const tmuxAvailable = await commandExists("tmux");
+		if (!tmuxAvailable) {
+			logError("tmux not found. Please install tmux to use the --tmux flag.");
+			process.exit(1);
+		}
 	}
 
 	// Create task source
@@ -117,6 +127,9 @@ export async function runLoop(options: RuntimeOptions): Promise<void> {
 			prdFile: options.prdFile,
 			prdIsFolder: options.prdIsFolder,
 			activeSettings,
+			modelOverride: options.modelOverride,
+			skipMerge: options.skipMerge,
+			tmux: options.tmux,
 		});
 	} else {
 		result = await runSequential({
@@ -136,6 +149,8 @@ export async function runLoop(options: RuntimeOptions): Promise<void> {
 			autoCommit: options.autoCommit,
 			browserEnabled: options.browserEnabled,
 			activeSettings,
+			modelOverride: options.modelOverride,
+			tmux: options.tmux,
 		});
 	}
 
