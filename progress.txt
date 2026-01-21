@@ -1,0 +1,5 @@
+# Progress Log
+
+## Task: Create hello.txt
+- Created file `hello.txt` with content 'hello world'
+- Status: Completed
